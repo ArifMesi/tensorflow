@@ -517,9 +517,10 @@ def tf_openmp_copts():
     })
 
 def tf_openmp_lopts():
-    # When compiling on Windows, force MSVC to use libiomp that was compiled
-    # as part of this build.
     return select({
+        "@local_xla//xla/tsl/mkl:build_with_mkl_lnx_openmp": ["-fopenmp", "-lomp"],
+        # When compiling on Windows, force MSVC to use libiomp that was compiled
+        # as part of this build.
         "@local_xla//xla/tsl/mkl:build_with_mkl_windows_openmp": [windows_llvm_openmp_linkopts()],
         "//conditions:default": [],
     })
@@ -1595,6 +1596,7 @@ def tf_cc_test(
             ],
             clean_dep("@local_xla//third_party/compute_library:build_with_acl"): [
                 "-fopenmp",
+                "-lomp",
                 "-lm",
             ],
         }) + linkopts + _rpath_linkopts(name),
@@ -1638,6 +1640,7 @@ def tf_cc_shared_test(
             ],
             clean_dep("@local_xla//third_party/compute_library:build_with_acl"): [
                 "-fopenmp",
+                "-lomp",
                 "-lm",
             ],
         }) + linkopts + _rpath_linkopts(name),

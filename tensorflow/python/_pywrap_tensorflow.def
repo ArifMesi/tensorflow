@@ -554,7 +554,6 @@ EXPORTS
   ?PrintModelAnalysis@tfprof@tensorflow@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PEBV34@0000@Z
   ?PrintResult@MetaOptimizer@grappler@tensorflow@@QEAAXXZ
   ?PrintStepStats@StatSummarizer@tensorflow@@QEBAXXZ
-  ?Printf@strings@tsl@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PEBDZZ
   ?ProcessStepStats@StatSummarizer@tensorflow@@QEAAXAEBVStepStats@2@@Z
   ?Profile@tfprof@tensorflow@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PEBV34@0@Z
   ?ProfilerFromFile@tfprof@tensorflow@@YAXPEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@Z

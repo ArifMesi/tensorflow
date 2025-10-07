@@ -72,6 +72,14 @@ TEST(CudaExecutorTest, CreateDeviceDescription) {
 
   EXPECT_THAT(*result->gpu_compute_capability().cuda_compute_capability(),
               ::testing::Field("major", &CudaComputeCapability::major, Ge(1)));
+
+  auto info = result->device_interconnect_info();
+  if (result->name() == "NVIDIA B200" && info.active_links) {
+    EXPECT_EQ(info.active_links, 18);
+
+    EXPECT_THAT(info.clique_id, Not(IsEmpty()));
+    EXPECT_THAT(info.cluster_uuid, Not(IsEmpty()));
+  }
 }
 
 TEST(CudaExecutorTest, GetCudaKernel) {

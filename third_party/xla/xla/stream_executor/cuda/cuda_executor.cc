@@ -691,19 +691,34 @@ absl::StatusOr<CUmulticastObjectProp> CreateMulticastObjectProperties(
   return multicast_properties;
 }
 
-absl::StatusOr<int64_t> GetDevicePcieBandwidth(int device_ordinal) {
-  nvmlDevice_t nvml_device;
-  nvmlReturn_t result =
-      nvmlDeviceGetHandleByIndex(device_ordinal, &nvml_device);
+// CUDA and Nvml can have different device ordering.
+absl::StatusOr<nvmlDevice_t> GetNvmlDevice(int device_ordinal) {
+  char pciBusId[] = "00000000:00:00.0";
+  cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_ordinal);
+  nvmlDevice_t device;
+
+  nvmlReturn_t result = nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
+  // NVML library is not a part of the CUDA toolkit, so there might be a
+  // situation when user is using CUDA 12.4 an higher, but the host NVML
+  // version doen't have the required functions.
+  if (result == NVML_ERROR_FUNCTION_NOT_FOUND) {
+    return absl::InternalError("NVML library doesn't have required functions.");
+  }
   if (result != NVML_SUCCESS) {
     return absl::InternalError(
         absl::StrCat("nvmlDeviceGetHandleByIndex failed with ", result));
   }
+  return device;
+}
+
+absl::StatusOr<int64_t> GetDevicePcieBandwidth(int device_ordinal) {
+  TF_ASSIGN_OR_RETURN(nvmlDevice_t nvml_device, GetNvmlDevice(device_ordinal));
 
   // nvmlDeviceGetPcieSpeed returns wrong information. Verified with
   // nvbandwidth.
   unsigned int link_gen, link_width;
-  result = nvmlDeviceGetCurrPcieLinkGeneration(nvml_device, &link_gen);
+  nvmlReturn_t result =
+      nvmlDeviceGetCurrPcieLinkGeneration(nvml_device, &link_gen);
   if (result != NVML_SUCCESS) {
     return absl::InternalError(absl::StrCat(
         "nvmlDeviceGetCurrPcieLinkGeneration failed with ", result));
@@ -722,6 +737,79 @@ absl::StatusOr<int64_t> GetDevicePcieBandwidth(int device_ordinal) {
   }
 
   return lane_speed * link_width;
+}
+
+absl::StatusOr<int> GetNumberOfActiveP2PNvlinks(int device_ordinal) {
+  TF_ASSIGN_OR_RETURN(nvmlDevice_t nvml_device, GetNvmlDevice(device_ordinal));
+
+  int p2p_links = 0;
+
+  constexpr int kBlackwellNvLinkCount = 18;
+  for (unsigned int i = 0; i < kBlackwellNvLinkCount; i++) {
+    nvmlEnableState_t is_active = NVML_FEATURE_DISABLED;
+    nvmlReturn_t result = nvmlDeviceGetNvLinkState(nvml_device, i, &is_active);
+    if (result != NVML_SUCCESS && result != NVML_ERROR_NOT_SUPPORTED) {
+      return absl::InternalError(
+          absl::StrCat("nvmlDeviceGetNvLinkState failed with ", result));
+    }
+    if (!is_active || result == NVML_ERROR_NOT_SUPPORTED) {
+      continue;
+    }
+
+    uint32_t supported_p2p = 0;
+    result = nvmlDeviceGetNvLinkCapability(
+        nvml_device, i, NVML_NVLINK_CAP_P2P_SUPPORTED, &supported_p2p);
+    if (result != NVML_SUCCESS && result != NVML_ERROR_NOT_SUPPORTED) {
+      return absl::InternalError(
+          absl::StrCat("nvmlDeviceGetNvLinkCapability failed with ", result));
+    }
+    if (supported_p2p) {
+      p2p_links++;
+    }
+  }
+  return p2p_links;
+}
+
+absl::StatusOr<std::pair<std::string, std::string>> GetDeviceFabricInfo(
+    int device_ordinal) {
+#if CUDA_VERSION >= 12040
+  TF_ASSIGN_OR_RETURN(nvmlDevice_t device, GetNvmlDevice(device_ordinal));
+
+  nvmlGpuFabricInfoV_t fabricInfo = {
+      .version = nvmlGpuFabricInfo_v2,
+      .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED};
+
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  if (result != NVML_SUCCESS) {
+    return absl::InternalError(
+        absl::StrCat("nvmlDeviceGetGpuFabricInfoV failed with ", result));
+  }
+
+  if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
+    std::string error_message =
+        "NVML doesn't support extracting fabric info or NVLink is not used by "
+        "the device.";
+    VLOG(2) << error_message;
+    return absl::InternalError(error_message);
+  }
+
+  static_assert(sizeof(fabricInfo.clusterUuid) == 16);
+  std::string uuid_str = absl::StrFormat(
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      fabricInfo.clusterUuid[0], fabricInfo.clusterUuid[1],
+      fabricInfo.clusterUuid[2], fabricInfo.clusterUuid[3],
+      fabricInfo.clusterUuid[4], fabricInfo.clusterUuid[5],
+      fabricInfo.clusterUuid[6], fabricInfo.clusterUuid[7],
+      fabricInfo.clusterUuid[8], fabricInfo.clusterUuid[9],
+      fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
+      fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
+      fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
+  return std::make_pair(uuid_str, std::to_string(fabricInfo.cliqueId));
+#else   // CUDA_VERSION >= 12040
+  std::string error_message = "NVML usage is not supported";
+  VLOG(2) << error_message;
+  return absl::InternalError(error_message);
+#endif  // CUDA_VERSION >= 12040
 }
 
 }  // namespace
@@ -1673,6 +1761,25 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
                  << " Assuming PCIe gen 3 x16 bandwidth.";
       status_or_bandwidth = 16LL * 1024 * 1024 * 1024;
     }
+  }
+  {
+    absl::StatusOr<int64_t> status_or_p2p_link_count =
+        GetNumberOfActiveP2PNvlinks(device_ordinal);
+    DeviceInterconnectInfo info;
+    if (status_or_p2p_link_count.ok()) {
+      info.active_links = *status_or_p2p_link_count;
+    } else {
+      LOG(ERROR) << status_or_p2p_link_count;
+    }
+    auto status_or_fabric_info = GetDeviceFabricInfo(device_ordinal);
+    if (status_or_fabric_info.ok()) {
+      auto [cluster_uuid, clique_id] = *status_or_fabric_info;
+      info.cluster_uuid = cluster_uuid;
+      info.clique_id = clique_id;
+    } else {
+      LOG(ERROR) << status_or_fabric_info.status();
+    }
+    desc.set_device_interconnect_info(info);
   }
 
   {

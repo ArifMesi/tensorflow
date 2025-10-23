@@ -91,22 +91,4 @@ absl::StatusOr<std::vector<BufferDebugLogEntry>> BufferDebugLog::ReadFromDevice(
   return entries;
 }
 
-absl::StatusOr<xla::gpu::BufferDebugLogProto> BufferDebugLog::ReadProto(
-    Stream& stream) const {
-  TF_ASSIGN_OR_RETURN(std::vector<BufferDebugLogEntry> entries,
-                      ReadFromDevice(stream));
-
-  xla::gpu::BufferDebugLogProto buffer_debug_log_proto;
-  buffer_debug_log_proto.mutable_entries()->Reserve(entries.size());
-  for (const auto& entry : entries) {
-    xla::gpu::BufferDebugLogEntryProto* entry_proto =
-        buffer_debug_log_proto.add_entries();
-    entry_proto->set_thunk_id(entry.entry_id.thunk_id().value());
-    entry_proto->set_buffer_idx(entry.entry_id.buffer_idx());
-    entry_proto->set_checksum(entry.value);
-  }
-
-  return buffer_debug_log_proto;
-}
-
 }  // namespace stream_executor::gpu

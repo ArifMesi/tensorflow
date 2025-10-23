@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_checksum_tracing_pass.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -27,13 +28,15 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/backends/gpu/runtime/buffer_debug_log_entry_metadata_store.h"
+#include "xla/backends/gpu/runtime/buffer_debug_log_structs.h"
 #include "xla/backends/gpu/runtime/buffers_checksum_thunk.h"
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
-#include "xla/backends/gpu/runtime/thunk_buffer_id.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -65,35 +68,25 @@ namespace {
 // If the thunk got wrapped, the data dependencies between the thunks will be
 // configured to ensure `predecessor_thunk` executes before the wrapped thunk
 // and `successor_thunk` executes after.
-absl::StatusOr<std::unique_ptr<Thunk>> WrapThunk(
+std::unique_ptr<Thunk> WrapThunk(
     std::unique_ptr<Thunk> thunk, BufferAllocation::Slice log_slice,
-    const Thunk& predecessor_thunk, Thunk& successor_thunk) {
+    const Thunk& predecessor_thunk, Thunk& successor_thunk,
+    std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store) {
   const auto& thunk_buffers = thunk->buffer_uses();
   if (thunk_buffers.empty()) {
     return thunk;
   }
 
-  absl::flat_hash_map<ThunkBufferId, BufferAllocation::Slice>
-      buffers_to_check_before;
-  absl::flat_hash_map<ThunkBufferId, BufferAllocation::Slice>
-      buffers_to_check_after;
+  absl::flat_hash_map<size_t, BufferAllocation::Slice> buffers_to_check_before;
+  absl::flat_hash_map<size_t, BufferAllocation::Slice> buffers_to_check_after;
 
   for (size_t buffer_idx = 0; buffer_idx < thunk_buffers.size(); ++buffer_idx) {
-    absl::StatusOr<ThunkBufferId> buffer_id =
-        ThunkBufferId::Create(thunk->thunk_info().thunk_id, buffer_idx);
-    if (!buffer_id.ok()) {
-      LOG(WARNING) << "Skipping buffer " << buffer_idx << " in thunk "
-                   << thunk->thunk_info().thunk_id << ": "
-                   << buffer_id.status();
-      continue;
-    }
-
     const BufferUse& use = thunk_buffers[buffer_idx];
     if (use.HasDefinedContentsOnInput()) {
-      buffers_to_check_before.emplace(buffer_id.value(), use.slice());
+      buffers_to_check_before.emplace(buffer_idx, use.slice());
     }
     if (use.HasDefinedContentsOnOutput()) {
-      buffers_to_check_after.emplace(buffer_id.value(), use.slice());
+      buffers_to_check_after.emplace(buffer_idx, use.slice());
     }
   }
 
@@ -105,7 +98,9 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapThunk(
   if (!buffers_to_check_before.empty()) {
     auto buffer_debug_before_thunk =
         std::make_unique<BuffersDebugChecksumThunk>(
-            Thunk::ThunkInfo(), log_slice, std::move(buffers_to_check_before));
+            Thunk::ThunkInfo(), log_slice, thunk->thunk_info().thunk_id,
+            std::move(buffers_to_check_before),
+            /*runs_before_checked_thunk=*/true, metadata_store);
     thunk->add_control_predecessor(buffer_debug_before_thunk.get());
     thunk_and_checks.push_back(std::move(buffer_debug_before_thunk));
   }
@@ -115,7 +110,9 @@ absl::StatusOr<std::unique_ptr<Thunk>> WrapThunk(
 
   if (!buffers_to_check_after.empty()) {
     auto buffer_debug_after_thunk = std::make_unique<BuffersDebugChecksumThunk>(
-        Thunk::ThunkInfo(), log_slice, std::move(buffers_to_check_after));
+        Thunk::ThunkInfo(), log_slice, thunk_ptr->thunk_info().thunk_id,
+        std::move(buffers_to_check_after),
+        /*runs_before_checked_thunk=*/false, metadata_store);
     buffer_debug_after_thunk->add_control_predecessor(thunk_ptr);
     thunk_and_checks.push_back(std::move(buffer_debug_after_thunk));
   }
@@ -136,10 +133,29 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     },
     xla::ffi::Ffi::Bind().Ctx<xla::ffi::Stream>().Arg<xla::ffi::Buffer<U8>>());
 
+// The state used by the DebugLogDump handler.
+struct DebugLogDumpState {
+  std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store;
+};
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kDebugLogDumpInstantiateHandler,
+    [](intptr_t state_ptr)
+        -> absl::StatusOr<std::unique_ptr<DebugLogDumpState>> {
+      // We need the HandlerBundle to keep the metadata store alive as long as
+      // the CustomCallThunk is alive.
+      //
+      return std::make_unique<DebugLogDumpState>(
+          *reinterpret_cast<DebugLogDumpState*>(state_ptr));
+    },
+    xla::ffi::Ffi::BindInstantiate().Attr<intptr_t>("state_ptr"));
+
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kDebugLogDumpHandler,
     [](se::Stream* stream, const HloComputation* absl_nonnull hlo_computation,
-       xla::ffi::Buffer<U8> log_buffer) {
+       DebugLogDumpState* state, xla::ffi::Buffer<U8> log_buffer) {
+      auto& metadata_store = *state->metadata_store;
+
       VLOG(1) << "HLO computation ptr: " << hlo_computation;
       const HloModule* hlo_module = hlo_computation->parent();
       VLOG(1) << "HLO module ptr: " << hlo_module;
@@ -150,8 +166,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
       se::gpu::BufferDebugLog buffer_debug_log =
           se::gpu::BufferDebugLog::FromDeviceMemoryUnchecked(
               log_buffer.device_memory());
-      TF_ASSIGN_OR_RETURN(xla::gpu::BufferDebugLogProto buffer_debug_log_proto,
-                          buffer_debug_log.ReadProto(*stream));
+      TF_ASSIGN_OR_RETURN(std::vector<BufferDebugLogEntry> log_entries,
+                          buffer_debug_log.ReadFromDevice(*stream));
+      BufferDebugLogProto buffer_debug_log_proto =
+          metadata_store.EntriesToProto(log_entries);
+
       VLOG(1) << "read " << buffer_debug_log_proto.entries_size() << " entries";
       DumpPerExecutionProtobufToFile(*hlo_module, buffer_debug_log_proto,
                                      debug_options, "buffer_debug_log",
@@ -161,6 +180,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     xla::ffi::Ffi::Bind()
         .Ctx<xla::ffi::Stream>()
         .Ctx<xla::ffi::CalledComputation>()
+        .Ctx<xla::ffi::State<DebugLogDumpState>>()
         .Arg<xla::ffi::Buffer<U8>>());
 
 }  // namespace
@@ -177,6 +197,9 @@ absl::StatusOr<bool> ThunkChecksumTracingPass::Run(
     VLOG(1) << "HLO module is null, skip buffer checksumming";
     return false;
   }
+
+  std::shared_ptr<BufferDebugLogEntryMetadataStore> metadata_store =
+      std::make_shared<BufferDebugLogEntryMetadataStore>();
 
   TF_ASSIGN_OR_RETURN(BufferAllocation * log_alloc,
                       allocator.NewEmptyAllocation(kLogSizeBytes));
@@ -195,22 +218,40 @@ absl::StatusOr<bool> ThunkChecksumTracingPass::Run(
           buffer_debug_init_bundle, /*operands=*/{shaped_log_slice},
           /*results=*/{}, /*attributes=*/{}, hlo_module->entry_computation()));
 
+  // To keep the metadata store alive as long as the CustomCallThunk is alive,
+  // use Instantiate handler to copy the shared_ptr to the execution state.
+  //
+  // The "execute" handler can technically be called multiple times, and we need
+  // to free the store some point. Instantiate is called only once, at
+  // CustomCallThunk creation, and its returned value is stored in
+  // ExecutionState that lives as long as the CustomCallThunk, and releases
+  // the stored state on destruction.
   XLA_FFI_Handler_Bundle buffer_debug_dump_bundle{};
+  buffer_debug_dump_bundle.instantiate = kDebugLogDumpInstantiateHandler;
   buffer_debug_dump_bundle.execute = kDebugLogDumpHandler;
+  xla::ffi::AttributesMap attributes;
+  DebugLogDumpState state{
+      /*metadata_store=*/metadata_store,
+  };
+  // This is only OK because
+  // - state_ptr attribute is only used in the Instantiate handler.
+  // - CustomCallThunk::Create is the only place where Instantiate handler is
+  //   called.
+  attributes["state_ptr"] = reinterpret_cast<intptr_t>(&state);
   TF_ASSIGN_OR_RETURN(auto buffer_debug_dump_thunk,
-                      CustomCallThunk::Create(Thunk::ThunkInfo(),
-                                              "xla_gpu_buffer_debug_log_dump",
-                                              buffer_debug_dump_bundle,
-                                              /*operands=*/{shaped_log_slice},
-                                              /*results=*/{}, /*attributes=*/{},
-                                              hlo_module->entry_computation()));
+                      CustomCallThunk::Create(
+                          Thunk::ThunkInfo(), "xla_gpu_buffer_debug_log_dump",
+                          buffer_debug_dump_bundle,
+                          /*operands=*/{shaped_log_slice},
+                          /*results=*/{}, /*attributes=*/std::move(attributes),
+                          hlo_module->entry_computation()));
 
   ThunkSequence& thunks = root_thunk->thunks();
   for (auto& thunk : thunks) {
-    TF_ASSIGN_OR_RETURN(
-        thunk, WrapThunk(std::move(thunk), log_slice,
-                         /*predecessor_thunk=*/*buffer_debug_init_thunk.get(),
-                         /*successor_thunk=*/*buffer_debug_dump_thunk.get()));
+    thunk =
+        WrapThunk(std::move(thunk), log_slice,
+                  /*predecessor_thunk=*/*buffer_debug_init_thunk,
+                  /*successor_thunk=*/*buffer_debug_dump_thunk, metadata_store);
   }
 
   thunks.reserve(thunks.size() + 2);

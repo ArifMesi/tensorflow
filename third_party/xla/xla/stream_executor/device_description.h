@@ -1,3 +1,5 @@
+#include "absl/status/status.h"
+#include "xla/tsl/platform/statusor.h"
 /* Copyright 2015 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,6 +78,46 @@ class GpuComputeCapability {
       return ptr->ToString();
     }
     return rocm_compute_capability()->ToString();
+  }
+
+  GpuComputeCapabilityProto ToProto() const {
+    GpuComputeCapabilityProto proto;
+    if (IsCuda()) {
+      *proto.mutable_cuda_compute_capability() =
+          cuda_compute_capability()->ToProto();
+    } else {
+      *proto.mutable_rocm_compute_capability() =
+          rocm_compute_capability()->ToProto();
+    }
+    return proto;
+  }
+
+  static absl::StatusOr<GpuComputeCapability> FromProto(
+      const GpuComputeCapabilityProto& proto) {
+    if (proto.has_cuda_compute_capability()) {
+      TF_ASSIGN_OR_RETURN(
+          CudaComputeCapability cuda_compute_capability,
+          CudaComputeCapability::FromProto(proto.cuda_compute_capability()));
+      return GpuComputeCapability(cuda_compute_capability);
+    }
+
+    if (proto.has_rocm_compute_capability()) {
+      return GpuComputeCapability(
+          RocmComputeCapability::FromProto(proto.rocm_compute_capability()));
+    }
+
+    return absl::InvalidArgumentError(
+        "The serialized GpuComputeCapability has no compute capability set.");
+  }
+
+  friend bool operator==(const GpuComputeCapability& lhs,
+                         const GpuComputeCapability& rhs) {
+    return lhs.compute_capability_ == rhs.compute_capability_;
+  }
+
+  friend bool operator!=(const GpuComputeCapability& lhs,
+                         const GpuComputeCapability& rhs) {
+    return !(lhs == rhs);
   }
 
  private:

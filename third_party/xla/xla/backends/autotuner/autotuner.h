@@ -1,3 +1,4 @@
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 /* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -102,6 +103,10 @@ class Autotuner {
   // ignored.
   absl::Status Autotune(HloModule* module,
                         const InstructionFilterFn& should_autotune);
+
+  absl::Status Autotune(HloModule* module,
+                        const InstructionFilterFn& should_autotune,
+                        MultiProcessKeyValueStore& sharding_kv_store);
 
  private:
   using InstructionsByFingerprint =

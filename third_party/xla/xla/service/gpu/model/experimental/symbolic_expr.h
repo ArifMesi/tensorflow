@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -148,6 +149,11 @@ inline ::llvm::hash_code hash_value(SymbolicExpr expr) {
   return ::llvm::hash_value(expr.GetImpl());
 }
 
+template <typename H>
+H AbslHashValue(H h, const SymbolicExpr& expr) {
+  return H::combine(std::move(h), hash_value(expr));
+}
+
 class SymbolicExprContext {
  public:
   explicit SymbolicExprContext(mlir::MLIRContext* mlir_context);
@@ -167,6 +173,23 @@ class SymbolicExprContext {
   // StorageUniquer pointer.
   mlir::MLIRContext* mlir_context_;
 };
+
+// Free function to create a constant SymbolicExpr.
+inline SymbolicExpr GetSymbolicConstantExpr(int64_t constant,
+                                            SymbolicExprContext* context) {
+  return context->CreateConstant(constant);
+}
+
+// Free function to create a vector of constant SymbolicExprs.
+inline std::vector<SymbolicExpr> GetSymbolicConstantExprs(
+    llvm::ArrayRef<int64_t> constants, SymbolicExprContext* context) {
+  std::vector<SymbolicExpr> exprs;
+  exprs.reserve(constants.size());
+  for (int64_t constant : constants) {
+    exprs.push_back(context->CreateConstant(constant));
+  }
+  return exprs;
+}
 
 }  // namespace gpu
 }  // namespace xla

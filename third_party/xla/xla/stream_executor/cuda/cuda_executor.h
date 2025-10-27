@@ -138,6 +138,8 @@ class CudaExecutor : public GpuExecutor {
   absl::StatusOr<std::unique_ptr<MemoryAllocator>> CreateMemoryAllocator(
       MemoryType type) override;
 
+  absl::StatusOr<size_t> GetVmmGranularity() const;
+
   // RAII wrapper for a VMM memory handle.
   class VmmMemoryHandle {
    public:
@@ -167,7 +169,7 @@ class CudaExecutor : public GpuExecutor {
 
     absl::Status SubscribeDevice(int device_number) override;
 
-    absl::StatusOr<void*> MapMemory(void* device_ptr,
+    absl::StatusOr<void*> MapMemory(const DeviceMemoryBase& location,
                                     GpuExecutor* gpu_executor) override;
 
    private:

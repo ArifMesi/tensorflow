@@ -772,6 +772,15 @@ CudaExecutor::RetainVmmMemoryHandle(void* ptr) {
   return CudaExecutor::VmmMemoryHandle(static_cast<uint64_t>(handle));
 }
 
+absl::StatusOr<size_t> CudaExecutor::GetVmmGranularity() const {
+  CUmemAllocationProp properties =
+      GetVmmAllocationProperties(device_, is_rdma_supported_);
+  size_t granularity = 0;
+  TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemGetAllocationGranularity(
+      &granularity, &properties, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED)));
+  return granularity;
+}
+
 absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
   if (!is_vmm_supported_) {
     return absl::InternalError("VMM is not supported on this device.");
@@ -797,6 +806,10 @@ absl::StatusOr<void*> CudaExecutor::VmmAllocateMemory(uint64_t bytes) {
   TF_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemAddressReserve(&ptr, padded_size, granularity, 0, 0)));
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
+
+  VLOG(3) << "[" << device_ordinal() << "] VMM allocated " << ptr
+          << " requested size: " << bytes << " padded size: " << padded_size
+          << " granularity: " << granularity;
 
   int device_count = 0;
   TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetDeviceCount(&device_count)));
@@ -1815,12 +1828,13 @@ absl::Status CudaExecutor::CudaMulticastMemory::Initialize(
   TF_ASSIGN_OR_RETURN(CUmulticastObjectProp multicast_properties,
                       CreateMulticastObjectProperties(num_devices_, size));
 
+  TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
+      cuMulticastCreate(&handle_, &multicast_properties)));
   VLOG(3) << "[" << static_cast<int>(cuda_executor->device_)
-          << "] Create multicast memory: " << static_cast<uint64_t>(handle_)
+          << "] Created multicast memory: " << static_cast<uint64_t>(handle_)
           << " size: " << padded_size_ << " with granularity: " << granularity_
           << " for " << num_devices_ << " devices.";
-  return stream_executor::cuda::ToStatus(
-      cuMulticastCreate(&handle_, &multicast_properties));
+  return absl::OkStatus();
 }
 
 absl::Status CudaExecutor::CudaMulticastMemory::SubscribeDevice(
@@ -1842,13 +1856,13 @@ absl::Status CudaExecutor::CudaMulticastMemory::SubscribeDevice(
 }
 
 absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
-    void* device_ptr, GpuExecutor* gpu_executor) {
+    const DeviceMemoryBase& location, GpuExecutor* gpu_executor) {
   CudaExecutor* cuda_executor = dynamic_cast<CudaExecutor*>(gpu_executor);
   if (cuda_executor == nullptr) {
     return absl::InvalidArgumentError("GpuExecutor is not a CudaExecutor.");
   }
 
-  if (device_ptr == nullptr) {
+  if (location.is_null()) {
     return absl::InvalidArgumentError("Device pointer is null.");
   }
 
@@ -1863,20 +1877,26 @@ absl::StatusOr<void*> CudaExecutor::CudaMulticastMemory::MapMemory(
 
   TF_ASSIGN_OR_RETURN(
       stream_executor::gpu::CudaExecutor::VmmMemoryHandle memory_handle,
-      cuda_executor->RetainVmmMemoryHandle(device_ptr));
+      cuda_executor->RetainVmmMemoryHandle(location.opaque()));
 
   CUmemGenericAllocationHandle retained_memory_handle =
       static_cast<CUmemGenericAllocationHandle>(memory_handle.handle());
 
+  TF_ASSIGN_OR_RETURN(auto base_address,
+                      cuda_executor->GetMemoryRange(location));
+  uint64_t offset = reinterpret_cast<uint64_t>(location.opaque()) -
+                    reinterpret_cast<uint64_t>(base_address.opaque());
+
   // Bind the memory to the multicast object.
   TF_RETURN_IF_ERROR(stream_executor::cuda::ToStatus(
       cuMulticastBindMem(handle_, /*mcOffset=*/0, retained_memory_handle,
-                         /*memOffset=*/0, padded_size_, /*flags=*/0)));
+                         /*memOffset=*/offset, padded_size_, /*flags=*/0)));
 
   VLOG(3) << "[" << static_cast<int>(cuda_executor->device_)
           << "] Mapped multicast memory: " << static_cast<uint64_t>(handle_)
           << " size: " << padded_size_ << " with granularity: " << granularity_
-          << " to address: " << device_ptr;
+          << " to address: " << location.opaque()
+          << " offset from base range: " << offset;
 
   // Map a virtual address range for the multicast memory. Multicast
   // memory is used to reduce the data stored in the multicast object.

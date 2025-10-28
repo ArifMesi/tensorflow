@@ -48,6 +48,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:ir_headers",
@@ -111,6 +112,7 @@ cc_library(
     deps = [
         "//xla/backends/cpu/codegen:fusion_compiler",
         "//xla/codegen:kernel_definition",
+        "//xla/codegen:kernel_emitter",
         "//xla/codegen:kernel_spec",
         "//xla/codegen:mlir_kernel_source",
         "//xla/runtime:buffer_use",

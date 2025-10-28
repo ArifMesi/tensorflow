@@ -100,10 +100,10 @@ NB_MODULE(_extension, kernel_runner_module) {
                                   {});
       });
 
-  nb::class_<MlirTestKernelEmitter, MlirKernelEmitter>(kernel_runner_module,
-                                                       "MlirTestKernelEmitter")
-      .def("__init__", [](MlirKernelEmitter* self, absl::string_view ir,
-                          absl::string_view kernel_name,
+  nb::class_<MlirTestKernelEmitter, KernelEmitter<MlirKernelSource>>(
+      kernel_runner_module, "MlirTestKernelEmitter")
+      .def("__init__", [](KernelEmitter<MlirKernelSource>* self,
+                          absl::string_view ir, absl::string_view kernel_name,
                           NbNumWorkGroups num_workgroups) {
         new (self)
             MlirTestKernelEmitter(ir, kernel_name,
@@ -189,8 +189,8 @@ NB_MODULE(_extension, kernel_runner_module) {
            nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
            nb::keep_alive<1, 4>());
 
-  nb::class_<CpuScatterFusion, MlirKernelEmitter>(kernel_runner_module,
-                                                  "ScatterKernelEmitter")
+  nb::class_<CpuScatterFusion, KernelEmitter<MlirKernelSource>>(
+      kernel_runner_module, "ScatterKernelEmitter")
       .def(
           "__init__",
           [](CpuScatterFusion* self, const HloFusionInstruction* instruction,
@@ -258,11 +258,12 @@ NB_MODULE(_extension, kernel_runner_module) {
             return *std::move(runner);
           })
       .def_static(
-          "create", [](std::unique_ptr<LlvmKernelDefinition,
-                                       nb::deleter<LlvmKernelDefinition>>
-                           kernel_definition,
-                       std::unique_ptr<JitCompiler, nb::deleter<JitCompiler>>
-                           jit_compiler) {
+          "create",
+          [](std::unique_ptr<KernelDefinition<LlvmKernelSource>,
+                             nb::deleter<KernelDefinition<LlvmKernelSource>>>
+                 kernel_definition,
+             std::unique_ptr<JitCompiler, nb::deleter<JitCompiler>>
+                 jit_compiler) {
             absl::StatusOr<KernelRunner> runner = KernelRunner::Create(
                 std::move(*kernel_definition), std::move(*jit_compiler));
 

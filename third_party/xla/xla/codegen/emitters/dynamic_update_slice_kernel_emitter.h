@@ -32,11 +32,11 @@ limitations under the License.
 #include "xla/codegen/mlir_kernel_definition.h"
 #include "xla/codegen/mlir_kernel_emitter.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/runtime/work_dimensions.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/shape.h"
 
 namespace xla::emitters {
@@ -50,7 +50,7 @@ namespace xla::emitters {
 class DynamicUpdateSliceKernelEmitter final : public MlirKernelEmitter {
  public:
   DynamicUpdateSliceKernelEmitter(
-      gpu::SymbolicExprContext& symbolic_expr_context,
+      SymbolicExprContext& symbolic_expr_context,
       const HloFusionInstruction& fusion, const HloFusionSpec& fusion_spec,
       const BufferAssignment* buffer_assignment,
       KernelArguments::BufferAlignment buffer_alignment,
@@ -65,7 +65,7 @@ class DynamicUpdateSliceKernelEmitter final : public MlirKernelEmitter {
   // Get the mapping from work item id to output.
   static IndexingMap ComputeWorkItemIdToOutputIndexing(
       const WorkDimensions& work_dimensions, const Shape& update_shape,
-      gpu::SymbolicExprContext* ctx);
+      SymbolicExprContext* ctx);
 
   std::string name() const final {
     return "dynamic_update_slice_kernel_emitter";
@@ -73,7 +73,7 @@ class DynamicUpdateSliceKernelEmitter final : public MlirKernelEmitter {
 
  private:
   IndexingMap ComputeWorkItemIdToInputIndexing(
-      gpu::SymbolicExprContext* symbolic_expr_context) const;
+      SymbolicExprContext* symbolic_expr_context) const;
   absl::StatusOr<KernelSpec> GetKernelSpec() const;
 
   absl::Status EmitEntryFunction(
@@ -85,7 +85,7 @@ class DynamicUpdateSliceKernelEmitter final : public MlirKernelEmitter {
   std::vector<emitters::EpilogueSpecification> GetEpilogues() const;
 
  private:
-  gpu::SymbolicExprContext& symbolic_expr_context_;
+  SymbolicExprContext& symbolic_expr_context_;
   const HloFusionInstruction& fusion_;
   const HloFusionSpec& fusion_spec_;
   std::vector<HloInstructionAdaptor> dus_ops_;

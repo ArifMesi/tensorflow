@@ -32,10 +32,10 @@ limitations under the License.
 #include "xla/codegen/mlir_kernel_definition.h"
 #include "xla/codegen/mlir_kernel_emitter.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/runtime/work_dimensions.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/gpu/model/experimental/symbolic_expr.h"
 #include "xla/shape.h"
 
 namespace xla::emitters {
@@ -43,7 +43,7 @@ namespace xla::emitters {
 // Generic loop fusion.
 class LoopFusionKernelEmitter final : public MlirKernelEmitter {
  public:
-  LoopFusionKernelEmitter(gpu::SymbolicExprContext& symbolic_expr_context,
+  LoopFusionKernelEmitter(SymbolicExprContext& symbolic_expr_context,
                           const HloFusionInstruction& fusion,
                           const HloFusionSpec& fusion_spec,
                           const BufferAssignment* buffer_assignment,
@@ -56,7 +56,7 @@ class LoopFusionKernelEmitter final : public MlirKernelEmitter {
 
   static IndexingMap ComputeWorkItemIdToOutputIndexing(
       const WorkDimensions& work_dimensions, const Shape& root_shape,
-      gpu::SymbolicExprContext* ctx);
+      SymbolicExprContext* ctx);
 
   // Get the shape that will be used for loop indexing for the given fusion
   // specification.
@@ -65,8 +65,7 @@ class LoopFusionKernelEmitter final : public MlirKernelEmitter {
   std::string name() const final { return "loop_fusion_kernel_emitter"; }
 
  private:
-  IndexingMap ComputeWorkItemIdToOutputIndexing(
-      gpu::SymbolicExprContext* ctx) const;
+  IndexingMap ComputeWorkItemIdToOutputIndexing(SymbolicExprContext* ctx) const;
 
   absl::Status EmitEntryFunction(
       const emitters::PartitionedComputations& computations,
@@ -75,7 +74,7 @@ class LoopFusionKernelEmitter final : public MlirKernelEmitter {
       const HloFusionInstruction& fusion) const;
 
  private:
-  gpu::SymbolicExprContext& symbolic_expr_context_;
+  SymbolicExprContext& symbolic_expr_context_;
   const HloFusionInstruction& fusion_;
   const HloFusionSpec& fusion_spec_;
   const BufferAssignment* buffer_assignment_;

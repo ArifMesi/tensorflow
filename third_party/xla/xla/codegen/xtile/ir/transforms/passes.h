@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,16 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_CODEGEN_LLVM_KERNEL_DEFINITION_H_
-#define XLA_CODEGEN_LLVM_KERNEL_DEFINITION_H_
+#ifndef XLA_CODEGEN_XTILE_IR_TRANSFORMS_PASSES_H_
+#define XLA_CODEGEN_XTILE_IR_TRANSFORMS_PASSES_H_
 
-#include "xla/codegen/kernel_definition.h"
-#include "xla/codegen/llvm_kernel_source.h"
+#include <memory>
 
-namespace xla {
+#include "mlir/IR/BuiltinOps.h"  // IWYU pragma: keep
+#include "mlir/Pass/Pass.h"
 
-using LlvmKernelDefinition = KernelDefinition<LlvmKernelSource>;
+namespace xla::xtile {
 
-}  // namespace xla
+#define GEN_PASS_DECL
+#include "xla/codegen/xtile/ir/transforms/passes.h.inc"
 
-#endif  // XLA_CODEGEN_LLVM_KERNEL_DEFINITION_H_
+std::unique_ptr<mlir::Pass> CreateVerifyLegalXTileOpsPass();
+
+#define GEN_PASS_REGISTRATION
+#include "xla/codegen/xtile/ir/transforms/passes.h.inc"
+
+}  // namespace xla::xtile
+
+#endif  // XLA_CODEGEN_XTILE_IR_TRANSFORMS_PASSES_H_

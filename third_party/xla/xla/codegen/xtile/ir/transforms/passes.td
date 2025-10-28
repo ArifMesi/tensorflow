@@ -13,18 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/codegen/llvm_ir_kernel_source.h"
+include "mlir/Pass/PassBase.td"
 
-#include <string>
+def VerifyLegalXTileOpsPass : Pass<"xtile-verify-legal-ops", "mlir::ModuleOp"> {
+  let summary = "Verify that all ops in the module are legal";
 
-#include "llvm/IR/Module.h"
-#include "xla/service/llvm_ir/llvm_util.h"
+  let description = [{
+    This pass verifies that all ops in the module are legal, which is defined as
+    the ops that are supported by all of the XTile backends.
+  }];
 
-namespace xla {
-
-std::string LlvmIrKernelSource::ToString() const {
-  return module_.withModuleDo(
-      [&](llvm::Module& m) { return llvm_ir::DumpToString(&m); });
+  let constructor = "CreateVerifyLegalXTileOpsPass()";
 }
-
-}  // namespace xla

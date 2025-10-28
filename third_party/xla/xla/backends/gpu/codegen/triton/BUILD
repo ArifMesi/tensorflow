@@ -242,6 +242,7 @@ cc_library(
         "//xla/codegen/tiling:tiled_hlo_instruction",
         "//xla/codegen/tiling:tiled_hlo_schedule",
         "//xla/codegen/xtile/ir:xtile",
+        "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu/model:block_level_parameters",

@@ -131,7 +131,7 @@ TEST_F(CommunicationTypeTest, DetectRailAlignedAllDevices) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectRailAlignedHalfMesh) {
@@ -157,7 +157,7 @@ TEST_F(CommunicationTypeTest, DetectRailAlignedHalfMesh) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
@@ -180,7 +180,7 @@ TEST_F(CommunicationTypeTest, DetectNonRailAligned) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSingleHost16DevicesForEmptyReplicaGroups) {
@@ -222,7 +222,7 @@ TEST_F(CommunicationTypeTest, DetectsRailAligned8DevicesForEmptyReplicaGroups) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsNonRailAligned16Devices) {
@@ -243,7 +243,7 @@ TEST_F(CommunicationTypeTest, DetectsNonRailAligned16Devices) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsSingleHostCollectivePermute) {
@@ -284,7 +284,7 @@ TEST_F(CommunicationTypeTest, DetectsNonRailAlignedCollectivePermute) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::NON_RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_NON_WORLD_LEVEL));
 }
 
 TEST_F(CommunicationTypeTest, DetectsRailAlignedCollectivePermute) {
@@ -304,7 +304,7 @@ TEST_F(CommunicationTypeTest, DetectsRailAlignedCollectivePermute) {
       module->entry_computation()->root_instruction());
   EXPECT_THAT(CommunicationType(/*num_devices_per_host=*/8, *instr,
                                 device_info().gpu_compute_capability()),
-              IsOkAndHolds(GPUCommunicationType::RAIL_ALIGNED));
+              IsOkAndHolds(GPUCommunicationType::MULTI_HOST_WORLD_LEVEL));
 }
 
 }  // namespace

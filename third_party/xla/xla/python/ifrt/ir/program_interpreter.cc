@@ -227,7 +227,8 @@ absl::StatusOr<ExecuteResult> ProgramInterpreter::Execute(
   for (const auto [idx, arg] : llvm::enumerate(main_func.getArguments())) {
     // Add to the environment the arrays that are used.
     bool is_donated = main_func.getArgAttr(
-                          idx, xla::ifrt::kIfrtDonatedArgAttrName) != nullptr;
+                          idx, xla::ifrt::kIfrtDonatedArgAttrName) != nullptr &&
+                      !options.non_donatable_input_indices.contains(idx);
     if (!arg.use_empty()) {
       env.AssociateArray(arg, ArrayState{/*array=*/arrays[idx],
                                          /*can_be_donated=*/is_donated});

@@ -49,7 +49,6 @@ namespace xla {
 namespace ifrt {
 namespace {
 
-using ::tsl::testing::IsOk;
 using ::xla::ifrt::test_util::AssertPerShardData;
 
 class IfrtIrExecutableImplTest
@@ -614,6 +613,61 @@ module {
                                      ArrayCopySemantics::kAlwaysCopy)
                   .Await(),
               testing::Not(absl_testing::IsOk()));
+}
+
+TEST_F(IfrtIrExecutableImplTest, BufferDonationOverride) {
+  std::string source = R"(
+!array = !ifrt.array<tensor<2x2xi32>,
+                     #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
+module {
+  func.func @main(%arg0: !array {ifrt.donated}) -> !array
+      attributes {ifrt.function} {
+    %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
+        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+    return %0 : !array
+  }
+
+  func.func private @add_one(%arg0: tensor<2x2xi32>) -> tensor<2x2xi32> {
+    %0 = mhlo.constant dense<1> : tensor<2x2xi32>
+    %1 = mhlo.add %arg0, %0 : tensor<2x2xi32>
+    return %1 : tensor<2x2xi32>
+  }
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
+                          LoadFromSource(source));
+  TF_ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
+  TF_ASSERT_OK_AND_ASSIGN(
+      LoadedExecutableRef loaded_exec,
+      client_->GetDefaultCompiler()->CompileAndLoad(
+          std::make_unique<IfrtIRProgram>(*mlir_module),
+          std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices))));
+
+  std::vector<int> data0 = {0, 1};
+  std::vector<int> data1 = {2, 3};
+  TF_ASSERT_OK_AND_ASSIGN(
+      ArrayRef input, CreateArray({data0.data(), data1.data()}, Shape({2, 2}),
+                                  DType(DType::kS32),
+                                  ShardingParam({2, 1}, {{0}, {2}}), devices));
+
+  ExecuteOptions options;
+  options.fill_status = true;
+  options.non_donatable_input_indices.insert(0);
+  TF_ASSERT_OK_AND_ASSIGN(
+      LoadedExecutable::ExecuteResult result,
+      loaded_exec->Execute(absl::MakeSpan(&input, 1), options,
+                           /*devices=*/std::nullopt));
+  TF_ASSERT_OK(result.status.Await());
+  ASSERT_EQ(result.outputs.size(), 1);
+  ASSERT_NO_FATAL_FAILURE(
+      AssertPerShardData<int>(result.outputs[0], DType(DType::kS32),
+                              Shape({1, 2}), {{1, 2}, {3, 4}}, devices));
+
+  std::vector<int> data(input->shape().num_elements());
+  EXPECT_OK(input
+                ->CopyToHostBuffer(data.data(), std::nullopt,
+                                   ArrayCopySemantics::kAlwaysCopy)
+                .Await());
 }
 
 TEST_F(IfrtIrExecutableImplTest, DonateOutputOfCall) {
